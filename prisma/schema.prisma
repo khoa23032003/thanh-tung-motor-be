@@ -1,0 +1,856 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  // url      = env("DATABASE_URL")
+}
+
+// ========================================================
+// ENUMS (Dành cho các cột ENUM trong SQL)
+// ========================================================
+
+enum OnlineOrderStatus {
+  Pending
+  Processing
+  Shipped
+  Delivered
+  Cancelled
+}
+
+enum AppointmentStatus {
+  Pending
+  Confirmed
+  Completed
+  Cancelled
+}
+
+enum RepairOrderStatus {
+  BAO_GIA         @map("Báo giá")
+  DANG_SUA        @map("Đang sửa")
+  CHO_THANH_TOAN  @map("Chờ thanh toán")
+  HOAN_THANH      @map("Hoàn thành")
+}
+
+enum MechanicCommissionStatus {
+  Unpaid
+  Paid
+}
+
+enum PaymentMethod {
+  Cash
+  Bank_Transfer @map("Bank Transfer")
+  Momo
+  VNPay
+}
+
+enum PurchaseOrderStatus {
+  Pending
+  Received
+  Cancelled
+}
+
+enum TransactionType {
+  OnlineOrder
+  RepairOrder
+  PurchaseOrder
+  ManualAdjustment
+}
+
+// ========================================================
+// MODULE 1: HỆ THỐNG & PHÂN QUYỀN (AUTH & SYSTEM)
+// ========================================================
+
+// 0. Bảng Audit Logs
+model AuditLog {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  loggedAt     DateTime @default(now())
+  userId       String?  @db.ObjectId
+  ipAddress    String?
+  eventType    String?
+  resourceType String?
+  resourceId   String?  @db.ObjectId // Chuyển thành ObjectId để trỏ tới các document khác
+  status       Int?
+  details      Json?
+  sessionId    String?
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+// 1. Bảng Users (Dùng chung cho cả Admin, Thợ và Khách hàng online)
+model User {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  username     String  @unique
+  passwordHash String
+  email        String? @unique
+  phone        String  @unique
+  fullName     String?
+  isActive     Boolean @default(true)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  // Relations
+  auditLogs AuditLog[]
+  userRoles UserRole[]
+  customer  Customer?
+  mechanic  Mechanic?
+}
+
+// 2. Bảng Roles (Vai trò: SuperAdmin, Thợ chính, Thu ngân, Khách...)
+model Role {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  name        String  @unique
+  description String?
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  // Relations
+  userRoles UserRole[]
+  menus     Menu[]
+}
+
+// 3. Bảng Gán quyền User - Role
+model UserRole {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+  roleId String @db.ObjectId
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+}
+
+// 4. Bảng Navbar/Menus (Quản lý Menu động trên Web tùy theo Role)
+model Menu {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  parentId String? @db.ObjectId
+  title    String
+  url      String
+  icon     String?
+  position Int     @default(0)
+  roleId   String? @db.ObjectId
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  parent   Menu?  @relation("SubMenus", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Menu[] @relation("SubMenus")
+  role     Role?  @relation(fields: [roleId], references: [id], onDelete: SetNull)
+}
+
+// ========================================================
+// MODULE 2: KHÁCH HÀNG & XE (CRM)
+// ========================================================
+
+// 5. Bảng Customers (Mở rộng từ Users nếu họ là khách mua hàng/sửa xe)
+model Customer {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String? @unique @db.ObjectId
+  loyaltyPoints Int    @default(0)
+  customerTier  String @default("Member")
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  addresses    CustomerAddress[]
+  vehicles     Vehicle[]
+  reviews      ProductReview[]
+  cart         Cart?
+  onlineOrders OnlineOrder[]
+  appointments Appointment[]
+}
+
+// 6. Bảng Customer Addresses (Sổ địa chỉ để ship phụ tùng online)
+model CustomerAddress {
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  customerId    String  @db.ObjectId
+  receiverName  String?
+  receiverPhone String?
+  addressLine   String
+  isDefault     Boolean @default(false)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  onlineOrders OnlineOrder[]
+}
+
+// 7. Bảng Vehicles (Xe của khách)
+model Vehicle {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  customerId   String  @db.ObjectId
+  licensePlate String  @unique
+  brand        String?
+  model        String?
+  color        String?
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  appointments         Appointment[]
+  repairOrders         RepairOrder[]
+  maintenanceReminders MaintenanceReminder[]
+}
+
+// ========================================================
+// MODULE 3: DANH MỤC SẢN PHẨM BÁN WEB (E-COMMERCE CATALOG)
+// ========================================================
+
+// 8. Bảng Categories (Danh mục: Nhớt, Lốp, Phanh...)
+model Category {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  name     String
+  slug     String  @unique
+  parentId String? @db.ObjectId
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  parent   Category?  @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Category[] @relation("SubCategories")
+  products Product[]
+}
+
+// 9. Bảng Brands (Thương hiệu)
+model Brand {
+  id      String  @id @default(auto()) @map("_id") @db.ObjectId
+  name    String
+  logoUrl String?
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  products Product[]
+}
+
+// 10. Bảng Products (Sản phẩm cốt lõi)
+model Product {
+  id             String  @id @default(auto()) @map("_id") @db.ObjectId
+  categoryId     String? @db.ObjectId
+  brandId        String? @db.ObjectId
+  sku            String  @unique
+  name           String
+  slug           String  @unique
+  description    String?
+  price          Float
+  costPrice      Float?
+  stockQty       Int     @default(0)
+  warrantyMonths Int     @default(0)
+  isActive       Boolean @default(true)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  category               Category?                 @relation(fields: [categoryId], references: [id])
+  brand                  Brand?                    @relation(fields: [brandId], references: [id])
+  attributeMappings      ProductAttributeMapping[]
+  images                 ProductImage[]
+  reviews                ProductReview[]
+  cartItems              CartItem[]
+  onlineOrderItems       OnlineOrderItem[]
+  repairParts            RepairPart[]
+  purchaseOrderDetails   PurchaseOrderDetail[]
+  inventoryTransactions  InventoryTransaction[]
+}
+
+// Bảng Thuộc tính (VD: Size, Chiều rộng, Loại gai...)
+model ProductAttribute {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  values ProductAttributeValue[]
+}
+
+// 11. Giá trị thuộc tính (VD: 120/70-17, 90/90-14)
+model ProductAttributeValue {
+  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  attributeId String @db.ObjectId
+  value       String
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  attribute         ProductAttribute          @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  attributeMappings ProductAttributeMapping[]
+}
+
+// 12. Gán thuộc tính vào sản phẩm
+model ProductAttributeMapping {
+  id               String @id @default(auto()) @map("_id") @db.ObjectId
+  productId        String @db.ObjectId
+  attributeValueId String @db.ObjectId
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  product        Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attributeValue ProductAttributeValue @relation(fields: [attributeValueId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, attributeValueId])
+}
+
+// 13. Bảng Product Images (Nhiều ảnh cho 1 sản phẩm)
+model ProductImage {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  productId   String  @db.ObjectId
+  imageUrl    String
+  isThumbnail Boolean @default(false)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+// 14. Bảng Product Reviews (Khách hàng đánh giá)
+model ProductReview {
+  id         String  @id @default(auto()) @map("_id") @db.ObjectId
+  productId  String  @db.ObjectId
+  customerId String  @db.ObjectId
+  rating     Int
+  comment    String?
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+}
+
+// 15. Bảng Vouchers/Promotions (Mã giảm giá)
+model Promotion {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  code            String    @unique
+  discountPercent Float     @default(0)
+  discountAmount  Float     @default(0)
+  startDate       DateTime?
+  endDate         DateTime?
+  usageLimit      Int       @default(100)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  onlineOrders OnlineOrder[]
+}
+
+// ========================================================
+// MODULE 4: GIỎ HÀNG & ĐƠN HÀNG ONLINE (WEB STORE)
+// ========================================================
+
+// 16. Bảng Giỏ hàng (Cart)
+model Cart {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  customerId String @unique @db.ObjectId
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  customer Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items    CartItem[]
+}
+
+// 17. Bảng Chi tiết giỏ hàng
+model CartItem {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  cartId    String @db.ObjectId
+  productId String @db.ObjectId
+  quantity  Int    @default(1)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+// 18. Bảng Đơn hàng Online (Mua ship về nhà)
+model OnlineOrder {
+  id          String            @id @default(auto()) @map("_id") @db.ObjectId
+  orderCode   String            @unique
+  customerId  String            @db.ObjectId
+  addressId   String?           @db.ObjectId
+  promoId     String?           @db.ObjectId
+  subtotal    Float
+  shippingFee Float             @default(0)
+  totalAmount Float
+  status      OnlineOrderStatus @default(Pending)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  customer Customer         @relation(fields: [customerId], references: [id])
+  address  CustomerAddress? @relation(fields: [addressId], references: [id])
+  promo    Promotion?       @relation(fields: [promoId], references: [id])
+  items    OnlineOrderItem[]
+  payments Payment[]
+}
+
+// 19. Bảng Chi tiết Đơn Online
+model OnlineOrderItem {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  orderId   String @db.ObjectId
+  productId String @db.ObjectId
+  quantity  Int
+  unitPrice Float
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  order   OnlineOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product     @relation(fields: [productId], references: [id])
+}
+
+// ========================================================
+// MODULE 5: DỊCH VỤ & ĐẶT LỊCH (BOOKING SYSTEM)
+// ========================================================
+
+// 20. Bảng Dịch vụ (Không phải hàng hóa cầm nắm được)
+model Service {
+  id                   String  @id @default(auto()) @map("_id") @db.ObjectId
+  name                 String
+  price                Float
+  estimatedTimeMinutes Int?
+  isActive             Boolean @default(true)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  appointmentServices AppointmentService[]
+  repairLabors        RepairLabor[]
+}
+
+// 21. Bảng Lịch hẹn (Khách book trên web)
+model Appointment {
+  id              String            @id @default(auto()) @map("_id") @db.ObjectId
+  customerId      String            @db.ObjectId
+  vehicleId       String?           @db.ObjectId
+  appointmentDate DateTime
+  appointmentTime String // Prisma không có kiểu Time riêng, lưu định dạng chuỗi HH:mm hoặc DateTime
+  note            String?
+  status          AppointmentStatus @default(Pending)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  customer     Customer             @relation(fields: [customerId], references: [id])
+  vehicle      Vehicle?             @relation(fields: [vehicleId], references: [id])
+  services     AppointmentService[]
+  repairOrders RepairOrder[]
+}
+
+// 22. Bảng Chi tiết Dịch vụ khách chọn khi đặt lịch
+model AppointmentService {
+  id            String @id @default(auto()) @map("_id") @db.ObjectId
+  appointmentId String @db.ObjectId
+  serviceId     String @db.ObjectId
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id])
+
+  @@unique([appointmentId, serviceId])
+}
+
+// ========================================================
+// MODULE 6: VẬN HÀNH TIỆM & TÍNH LƯƠNG (WORKSHOP ERP)
+// ========================================================
+
+// 23. Bảng Lương Thợ (Employees)
+model Mechanic {
+  id             String @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String @unique @db.ObjectId
+  baseSalary     Float  @default(0)
+  commissionRate Float  @default(0)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  user                User                 @relation(fields: [userId], references: [id])
+  repairLabors        RepairLabor[]
+  mechanicCommissions MechanicCommission[]
+}
+
+// 24. Bảng Phiếu Sửa Chữa Tại Tiệm (Repair Orders)
+model RepairOrder {
+  id            String            @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId     String            @db.ObjectId
+  appointmentId String?           @db.ObjectId
+  status        RepairOrderStatus @default(BAO_GIA)
+  totalParts    Float             @default(0)
+  totalLabor    Float             @default(0)
+  finalAmount   Float
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  vehicle              Vehicle               @relation(fields: [vehicleId], references: [id])
+  appointment          Appointment?          @relation(fields: [appointmentId], references: [id])
+  repairParts          RepairPart[]
+  repairLabors         RepairLabor[]
+  payments             Payment[]
+  maintenanceReminders MaintenanceReminder[]
+}
+
+// 25. Bảng Chi tiết Phụ tùng sử dụng
+model RepairPart {
+  id            String @id @default(auto()) @map("_id") @db.ObjectId
+  repairOrderId String @db.ObjectId
+  productId     String @db.ObjectId
+  quantity      Int
+  unitPrice     Float
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  repairOrder RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id])
+}
+
+// 26. Bảng Chi tiết Công thợ
+model RepairLabor {
+  id            String @id @default(auto()) @map("_id") @db.ObjectId
+  repairOrderId String @db.ObjectId
+  serviceId     String @db.ObjectId
+  mechanicId    String @db.ObjectId
+  laborFee      Float
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  repairOrder         RepairOrder          @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  service             Service              @relation(fields: [serviceId], references: [id])
+  mechanic            Mechanic             @relation(fields: [mechanicId], references: [id])
+  mechanicCommissions MechanicCommission[]
+}
+
+// 27. Bảng Tính Hoa Hồng Thợ (Tự động sinh ra khi hoàn thành bill)
+model MechanicCommission {
+  id            String                   @id @default(auto()) @map("_id") @db.ObjectId
+  mechanicId    String                   @db.ObjectId
+  repairLaborId String                   @db.ObjectId
+  amount        Float
+  earnedDate    DateTime
+  status        MechanicCommissionStatus @default(Unpaid)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  mechanic    Mechanic    @relation(fields: [mechanicId], references: [id])
+  repairLabor RepairLabor @relation(fields: [repairLaborId], references: [id])
+}
+
+// ========================================================
+// MODULE 7: KHO BÃI & THANH TOÁN (INVENTORY & PAYMENTS)
+// ========================================================
+
+// 28. Bảng Thanh toán (Lưu chung cho cả Đơn Online và Phiếu Sửa Xe)
+model Payment {
+  id              String         @id @default(auto()) @map("_id") @db.ObjectId
+  onlineOrderId   String?        @db.ObjectId
+  repairOrderId   String?        @db.ObjectId
+  paymentMethod   PaymentMethod?
+  amount          Float
+  transactionCode String?
+  paymentDate     DateTime       @default(now())
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  onlineOrder OnlineOrder? @relation(fields: [onlineOrderId], references: [id])
+  repairOrder RepairOrder? @relation(fields: [repairOrderId], references: [id])
+}
+
+// 29. Bảng Nhà Cung Cấp (Suppliers)
+model Supplier {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  contactPhone String?
+  address      String?
+  debtBalance  Float   @default(0)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+}
+
+// 30. Bảng Đơn Nhập Hàng (Purchase Orders)
+model PurchaseOrder {
+  id          String              @id @default(auto()) @map("_id") @db.ObjectId
+  supplierId  String              @db.ObjectId
+  totalAmount Float
+  paidAmount  Float               @default(0)
+  status      PurchaseOrderStatus @default(Pending)
+  orderDate   DateTime            @default(now())
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  supplier Supplier              @relation(fields: [supplierId], references: [id])
+  details  PurchaseOrderDetail[]
+}
+
+// 31. Bảng Chi tiết Nhập Hàng
+model PurchaseOrderDetail {
+  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  poId        String @db.ObjectId
+  productId   String @db.ObjectId
+  quantity    Int
+  importPrice Float
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id])
+}
+
+// 32. Thẻ Kho (Lịch sử Nhập/Xuất/Tồn)
+model InventoryTransaction {
+  id             String          @id @default(auto()) @map("_id") @db.ObjectId
+  productId      String          @db.ObjectId
+  referenceType  TransactionType
+  referenceId    String          @db.ObjectId // Khóa ngoại dạng đa hình trỏ tới OnlineOrder, RepairOrder, v.v
+  quantityChange Int
+  stockAfter     Int
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+// 33. Bảng Nhắc nhở bảo dưỡng (CRM Reminders)
+model MaintenanceReminder {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId     String   @db.ObjectId
+  repairOrderId String   @db.ObjectId
+  reminderDate  DateTime
+  message       String
+  isSent        Boolean  @default(false)
+
+  // Audit fields
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  vehicle     Vehicle     @relation(fields: [vehicleId], references: [id])
+  repairOrder RepairOrder @relation(fields: [repairOrderId], references: [id])
+}
