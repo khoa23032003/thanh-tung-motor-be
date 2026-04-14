@@ -3,21 +3,23 @@ import {
   Get,
   Post,
   Body,
-  Patch,
   Param,
   Delete,
   Query,
 } from '@nestjs/common';
 import { BrandService } from './brand.service';
 import { CreateBrandDto } from './dto/create-brand.dto';
-import { UpdateBrandDto } from './dto/update-brand.dto';
-
 import { QueryBrandDto } from 'src/brand/dto/query-brand.dto';
-
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { PermissionGuard } from 'src/auth/guards/permission.guard';
+import { UseGuards } from '@nestjs/common';
+import { Permissions } from 'src/auth/Decorator/permission.decorator';
 @Controller('brand')
 export class BrandController {
   constructor(private readonly brandService: BrandService) {}
 
+  @UseGuards(JwtAuthGuard, PermissionGuard)
+  @Permissions('brand:add')
   @Post()
   create(@Body() dto: CreateBrandDto) {
     const userId = 'system';
