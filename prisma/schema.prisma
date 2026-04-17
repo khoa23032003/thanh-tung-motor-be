@@ -27,10 +27,10 @@ enum AppointmentStatus {
 }
 
 enum RepairOrderStatus {
-  BAO_GIA         @map("Báo giá")
-  DANG_SUA        @map("Đang sửa")
-  CHO_THANH_TOAN  @map("Chờ thanh toán")
-  HOAN_THANH      @map("Hoàn thành")
+  BAO_GIA        @map("Báo giá")
+  DANG_SUA       @map("Đang sửa")
+  CHO_THANH_TOAN @map("Chờ thanh toán")
+  HOAN_THANH     @map("Hoàn thành")
 }
 
 enum MechanicCommissionStatus {
@@ -78,7 +78,6 @@ model AuditLog {
   user User? @relation(fields: [userId], references: [id])
 }
 
-// 1. Bảng Users (Dùng chung cho cả Admin, Thợ và Khách hàng online)
 model User {
   id           String  @id @default(auto()) @map("_id") @db.ObjectId
   username     String  @unique
@@ -88,7 +87,6 @@ model User {
   fullName     String?
   isActive     Boolean @default(true)
 
-  // Audit fields
   deletedFlg Int       @default(0)
   deletedBy  String?
   deletedAt  DateTime?
@@ -97,20 +95,18 @@ model User {
   updatedBy  String?
   updatedAt  DateTime? @updatedAt
 
-  // Relations
-  auditLogs AuditLog[]
-  userRoles UserRole[]
-  customer  Customer?
-  mechanic  Mechanic?
+  userRoles       UserRole[]
+  userPermissions UserPermission[]
+  AuditLog        AuditLog[]
+  Customer        Customer?
+  Mechanic        Mechanic?
 }
 
-// 2. Bảng Roles (Vai trò: SuperAdmin, Thợ chính, Thu ngân, Khách...)
 model Role {
   id          String  @id @default(auto()) @map("_id") @db.ObjectId
   name        String  @unique
   description String?
 
-  // Audit fields
   deletedFlg Int       @default(0)
   deletedBy  String?
   deletedAt  DateTime?
@@ -119,30 +115,68 @@ model Role {
   updatedBy  String?
   updatedAt  DateTime? @updatedAt
 
-  // Relations
-  userRoles UserRole[]
-  menus     Menu[]
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+  Menu            Menu[]
 }
 
-// 3. Bảng Gán quyền User - Role
+model Permission {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  code        String  @unique
+  description String?
+
+  deletedFlg Int       @default(0)
+  deletedBy  String?
+  deletedAt  DateTime?
+  createdBy  String?
+  createdAt  DateTime  @default(now())
+  updatedBy  String?
+  updatedAt  DateTime? @updatedAt
+
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+}
+
 model UserRole {
   id     String @id @default(auto()) @map("_id") @db.ObjectId
   userId String @db.ObjectId
   roleId String @db.ObjectId
 
-  // Audit fields
-  deletedFlg Int       @default(0)
-  deletedBy  String?
-  deletedAt  DateTime?
-  createdBy  String?
-  createdAt  DateTime  @default(now())
-  updatedBy  String?
-  updatedAt  DateTime? @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([userId, roleId])
+}
+
+model RolePermission {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  roleId       String @db.ObjectId
+  permissionId String @db.ObjectId
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model UserPermission {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String @db.ObjectId
+  permissionId String @db.ObjectId
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionId])
 }
 
 // 4. Bảng Navbar/Menus (Quản lý Menu động trên Web tùy theo Role)
@@ -175,10 +209,10 @@ model Menu {
 
 // 5. Bảng Customers (Mở rộng từ Users nếu họ là khách mua hàng/sửa xe)
 model Customer {
-  id           String  @id @default(auto()) @map("_id") @db.ObjectId
-  userId       String? @unique @db.ObjectId
-  loyaltyPoints Int    @default(0)
-  customerTier  String @default("Member")
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String? @unique @db.ObjectId
+  loyaltyPoints Int     @default(0)
+  customerTier  String  @default("Member")
 
   // Audit fields
   deletedFlg Int       @default(0)
@@ -311,16 +345,16 @@ model Product {
   updatedBy  String?
   updatedAt  DateTime? @updatedAt
 
-  category               Category?                 @relation(fields: [categoryId], references: [id])
-  brand                  Brand?                    @relation(fields: [brandId], references: [id])
-  attributeMappings      ProductAttributeMapping[]
-  images                 ProductImage[]
-  reviews                ProductReview[]
-  cartItems              CartItem[]
-  onlineOrderItems       OnlineOrderItem[]
-  repairParts            RepairPart[]
-  purchaseOrderDetails   PurchaseOrderDetail[]
-  inventoryTransactions  InventoryTransaction[]
+  category              Category?                 @relation(fields: [categoryId], references: [id])
+  brand                 Brand?                    @relation(fields: [brandId], references: [id])
+  attributeMappings     ProductAttributeMapping[]
+  images                ProductImage[]
+  reviews               ProductReview[]
+  cartItems             CartItem[]
+  onlineOrderItems      OnlineOrderItem[]
+  repairParts           RepairPart[]
+  purchaseOrderDetails  PurchaseOrderDetail[]
+  inventoryTransactions InventoryTransaction[]
 }
 
 // Bảng Thuộc tính (VD: Size, Chiều rộng, Loại gai...)
@@ -505,9 +539,9 @@ model OnlineOrder {
   updatedBy  String?
   updatedAt  DateTime? @updatedAt
 
-  customer Customer         @relation(fields: [customerId], references: [id])
-  address  CustomerAddress? @relation(fields: [addressId], references: [id])
-  promo    Promotion?       @relation(fields: [promoId], references: [id])
+  customer Customer          @relation(fields: [customerId], references: [id])
+  address  CustomerAddress?  @relation(fields: [addressId], references: [id])
+  promo    Promotion?        @relation(fields: [promoId], references: [id])
   items    OnlineOrderItem[]
   payments Payment[]
 }

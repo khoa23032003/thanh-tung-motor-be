@@ -6,6 +6,7 @@ import {
   Param,
   Delete,
   Query,
+  Request,
 } from '@nestjs/common';
 import { BrandService } from './brand.service';
 import { CreateBrandDto } from './dto/create-brand.dto';
@@ -19,30 +20,27 @@ export class BrandController {
   constructor(private readonly brandService: BrandService) {}
 
   @UseGuards(JwtAuthGuard, PermissionGuard)
-  @Permissions('brand:add')
+  @Permissions('brand:create')
   @Post()
-  create(@Body() dto: CreateBrandDto) {
-    const userId = 'system';
-    return this.brandService.create(dto, userId);
+  create(@Body() dto: CreateBrandDto, @Request() req) {
+    return this.brandService.create(dto, req.user.id);
   }
 
+  @Permissions('brand:view')
   @Get()
   findAll(@Query() query: QueryBrandDto) {
     return this.brandService.findAll(query);
   }
 
+  @Permissions('brand:view')
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.brandService.findOne(+id);
+    return this.brandService.findOne(id);
   }
 
-  // @Patch(':id')
-  // update(@Param('id') id: string, @Body() updateBrandDto: UpdateBrandDto) {
-  //   return this.brandService.update(+id, updateBrandDto);
-  // }
-
+  @Permissions('brand:delete')
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.brandService.remove(+id);
+  remove(@Param('id') id: string, @Request() req) {
+    return this.brandService.remove(id, req.user.id);
   }
 }
