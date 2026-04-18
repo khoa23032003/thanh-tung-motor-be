@@ -46,6 +46,9 @@ export class AuthController {
   @ApiOperation({
     summary: 'Lấy danh sách người dùng',
   })
+  @ApiOperation({
+    summary: 'Lấy danh sách người dùng',
+  })
   async findAll() {
     return this.authService.findAll();
   }
