@@ -58,4 +58,35 @@ export class AuthService {
       accessToken: this.jwtService.sign(payload),
     };
   }
+
+  async findAll() {
+    const users = await this.prisma.user.findMany({
+      where: { deletedFlg: 0 },
+      include: {
+        userRoles: {
+          include: { role: true },
+        },
+        userPermissions: {
+          include: { permission: true },
+        },
+      },
+    });
+
+    return users.map((user) => this.mapUser(user));
+  }
+
+  mapUser(user: any) {
+    return {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      isActive: user.isActive,
+
+      roles: user.userRoles.map((ur) => ur.role.name),
+
+      permissions: user.userPermissions.map((up) => up.permission.code),
+    };
+  }
 }

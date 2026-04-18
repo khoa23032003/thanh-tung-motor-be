@@ -3,14 +3,14 @@ import { IsString, MinLength } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty({
-    example: 'thanhtung123',
+    example: 'khoa',
     description: 'Tên đăng nhập',
   })
   @IsString()
   username: string;
 
   @ApiProperty({
-    example: '123456',
+    example: '2303',
     description: 'Mật khẩu',
   })
   @IsString()

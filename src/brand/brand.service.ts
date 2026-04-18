@@ -2,6 +2,9 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { CreateBrandDto } from './dto/create-brand.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryBrandDto } from 'src/brand/dto/query-brand.dto';
+import { AppException } from 'src/error/app.exception';
+import { ERROR_CODES } from 'src/error/error-codes';
+import { UpdateBrandDto } from 'src/brand/dto/update-brand.dto';
 
 @Injectable()
 export class BrandService {
@@ -69,15 +72,35 @@ export class BrandService {
     };
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} brand`;
+  async findOne(id: string) {
+    const brand = await this.prisma.brand.findFirst({
+      where: { id, deletedFlg: 0 },
+    });
+    if (!brand) {
+      throw new AppException(ERROR_CODES.BRAND_NOT_FOUND);
+    }
+    return brand;
   }
 
-  // update(id: number, updateBrandDto: UpdateBrandDto) {
-  //   return `This action updates a #${id} brand`;
-  // }
+  async update(id: string, dto: UpdateBrandDto) {
+    await this.findOne(id);
 
-  remove(id: number) {
-    return `This action removes a #${id} brand`;
+    return this.prisma.brand.update({
+      where: { id },
+      data: dto,
+    });
+  }
+
+  async remove(id: string, userId: string) {
+    await this.findOne(id);
+
+    return this.prisma.brand.update({
+      where: { id },
+      data: {
+        deletedFlg: 1,
+        deletedAt: new Date(),
+        deletedBy: userId,
+      },
+    });
   }
 }
